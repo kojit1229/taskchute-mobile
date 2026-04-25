@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="タスクシュート">
+<meta name="theme-color" content="#1a1a1a">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>タスクシュート Mobile</title>
+</head>
+<body>
+
+<!-- トップバー -->
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="date-label" id="date-label">—</span>
+    <span class="sync-status" id="sync-status"></span>
+  </div>
+  <div class="topbar-right">
+    <button class="icon-btn" id="btn-load" title="データ読込">📂</button>
+    <button class="icon-btn" id="btn-save" title="変更を書き出し">💾<span class="badge" id="edits-badge" hidden>0</span></button>
+  </div>
+</header>
+
+<!-- メイン -->
+<main>
+
+  <!-- 初回案内 -->
+  <section id="welcome" class="welcome">
+    <h2>📱 タスクシュート Mobile</h2>
+    <p>PC アプリで書き出した <code>latest.json</code> を読み込んでください。</p>
+    <ol class="steps">
+      <li>PC 側で「📤 iPhone用データを書き出す」を実行</li>
+      <li>iCloud Drive で同期を確認</li>
+      <li>下の「データを読み込む」ボタンをタップ</li>
+      <li>「ファイル」アプリで <code>taskchute-sync/exports/latest.json</code> を選択</li>
+    </ol>
+    <button class="primary-btn" id="btn-load-welcome">📂 データを読み込む</button>
+  </section>
+
+  <!-- タスク -->
+  <section class="panel" id="panel-tasks" hidden>
+    <div class="panel-header">
+      <h3>✅ タスク</h3>
+      <span class="count" id="tasks-count">0/0</span>
+    </div>
+    <div id="tasks-list"></div>
+    <button class="add-btn" id="btn-add-task">+ タスク追加</button>
+  </section>
+
+  <!-- ルーティン -->
+  <section class="panel" id="panel-routines" hidden>
+    <div class="panel-header">
+      <h3>🔄 ルーティン</h3>
+      <span class="count" id="routines-count">0/0</span>
+    </div>
+    <div id="routines-list"></div>
+  </section>
+
+  <!-- 予定 -->
+  <section class="panel" id="panel-plans" hidden>
+    <div class="panel-header">
+      <h3>📋 予定</h3>
+      <span class="count" id="plans-count">0</span>
+    </div>
+    <div id="plans-list"></div>
+    <button class="add-btn" id="btn-add-plan">+ 予定追加</button>
+  </section>
+
+  <!-- 変更ログ -->
+  <section class="panel" id="panel-edits" hidden>
+    <div class="panel-header">
+      <h3>📝 今日の変更</h3>
+      <span class="count" id="edits-count">0</span>
+    </div>
+    <div id="edits-list"></div>
+    <button class="secondary-btn" id="btn-clear-edits">⚠️ 変更をクリア</button>
+  </section>
+
+</main>
+
+<!-- フッター -->
+<footer class="footer" id="footer" hidden>
+  <button class="save-btn" id="btn-save-bottom">💾 変更を書き出し (<span id="edits-count-bottom">0</span>)</button>
+</footer>
+
+<!-- ===== モーダル: タスク追加/編集 ===== -->
+<div class="modal" id="modal-task" hidden>
+  <div class="modal-inner">
+    <h3 id="task-modal-title">タスクを追加</h3>
+    <label>タスク名
+      <input type="text" id="task-name" placeholder="例: 買い物">
+    </label>
+    <div class="row">
+      <label>予定開始
+        <input type="time" id="task-plan-start">
+      </label>
+      <label>予定終了
+        <input type="time" id="task-plan-end">
+      </label>
+    </div>
+    <div class="row">
+      <label>実績開始
+        <input type="time" id="task-actual-start">
+      </label>
+      <label>実績終了
+        <input type="time" id="task-actual-end">
+      </label>
+    </div>
+    <label>見積時間
+      <input type="text" id="task-estimate" placeholder="例: 30分">
+    </label>
+    <label>カテゴリー
+      <select id="task-category">
+        <option value="">（未分類）</option>
+      </select>
+    </label>
+    <div class="row">
+      <label>⚡ 充電
+        <select id="task-charge">
+          <option value="0">なし</option>
+          <option value="1">⚡ 小</option>
+          <option value="2">⚡⚡ 中</option>
+          <option value="3">⚡⚡⚡ 大</option>
+        </select>
+      </label>
+      <label>⚡ 放電
+        <select id="task-discharge">
+          <option value="0">なし</option>
+          <option value="1">⚡ 小</option>
+          <option value="2">⚡⚡ 中</option>
+          <option value="3">⚡⚡⚡ 大</option>
+        </select>
+      </label>
+    </div>
+    <label>コメント
+      <textarea id="task-comment" rows="2"></textarea>
+    </label>
+    <div class="modal-buttons">
+      <button class="secondary-btn" data-action="close-modal">キャンセル</button>
+      <button class="primary-btn" id="btn-task-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== モーダル: 予定追加/編集 ===== -->
+<div class="modal" id="modal-plan" hidden>
+  <div class="modal-inner">
+    <h3 id="plan-modal-title">予定を追加</h3>
+    <label>タイトル
+      <input type="text" id="plan-title" placeholder="例: 打ち合わせ">
+    </label>
+    <div class="row">
+      <label>予定開始
+        <input type="time" id="plan-start">
+      </label>
+      <label>予定終了
+        <input type="time" id="plan-end">
+      </label>
+    </div>
+    <div class="row">
+      <label>実績開始
+        <input type="time" id="plan-actual-start">
+      </label>
+      <label>実績終了
+        <input type="time" id="plan-actual-end">
+      </label>
+    </div>
+    <label>ラベル
+      <select id="plan-label">
+        <option value="">（なし）</option>
+      </select>
+    </label>
+    <label>カテゴリー
+      <select id="plan-category">
+        <option value="">（未分類）</option>
+      </select>
+    </label>
+    <div class="row">
+      <label>⚡ 充電
+        <select id="plan-charge">
+          <option value="0">なし</option>
+          <option value="1">⚡ 小</option>
+          <option value="2">⚡⚡ 中</option>
+          <option value="3">⚡⚡⚡ 大</option>
+        </select>
+      </label>
+      <label>⚡ 放電
+        <select id="plan-discharge">
+          <option value="0">なし</option>
+          <option value="1">⚡ 小</option>
+          <option value="2">⚡⚡ 中</option>
+          <option value="3">⚡⚡⚡ 大</option>
+        </select>
+      </label>
+    </div>
+    <label>メモ
+      <textarea id="plan-comment" rows="2"></textarea>
+    </label>
+    <div class="modal-buttons">
+      <button class="secondary-btn" data-action="close-modal">キャンセル</button>
+      <button class="primary-btn" id="btn-plan-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== トースト ===== -->
+<div class="toast" id="toast" hidden></div>
+
+<!-- ファイル選択（非表示） -->
+<input type="file" id="file-input" accept=".json,application/json" hidden>
+
+<script src="app.js"></script>
+</body>
+</html>
