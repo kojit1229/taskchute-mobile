@@ -1,6 +1,8 @@
 /* =====================================================
- * タスクシュート Mobile - PWA アプリ (v2)
- * 予定/実績時間、カテゴリー、コメント、充電/放電 すべて編集可能
+ * タスクシュート Mobile - PWA アプリ (v3 タブUI)
+ * - タスク/ルーティン/予定をタブ切替
+ * - 一覧はコンパクト表示（タスク名 + 時間のみ）
+ * - タップで詳細モーダル → 全項目編集可能
  * ===================================================== */
 
 'use strict';
@@ -10,11 +12,12 @@ const State = {
   data: null,
   edits: [],
   currentDate: '',
+  activeTab: 'tasks',           // 'tasks' | 'routines' | 'plans'
   taskEditTarget: null,
   planEditTarget: null
 };
 
-const STORAGE_KEY = 'taskchute_mobile_state_v2';
+const STORAGE_KEY = 'taskchute_mobile_state_v3';
 
 // ---- ユーティリティ ----
 function $(sel) { return document.querySelector(sel); }
@@ -45,6 +48,7 @@ function saveToStorage() {
       data: State.data,
       edits: State.edits,
       currentDate: State.currentDate,
+      activeTab: State.activeTab,
       savedAt: nowISO()
     }));
   } catch (e) { console.warn('保存失敗:', e); }
@@ -58,6 +62,7 @@ function loadFromStorage() {
     if (p.data) State.data = p.data;
     if (p.edits) State.edits = p.edits;
     if (p.currentDate) State.currentDate = p.currentDate;
+    if (p.activeTab) State.activeTab = p.activeTab;
     return !!p.data;
   } catch (e) { return false; }
 }
@@ -80,7 +85,7 @@ function setupFileLoad() {
       if (State.edits.length > 0 && State.currentDate !== json.date) {
         const ok = confirm(
           `未送信の変更が ${State.edits.length} 件あります。\n` +
-          '新しい日付のデータを読み込むと、現在の変更は無効になる可能性があります。\n\n読み込みますか？'
+          '別日のデータを読み込むと現在の変更が失われる可能性があります。\n\n読み込みますか？'
         );
         if (!ok) { fileInput.value = ''; return; }
       }
@@ -139,7 +144,7 @@ function setupSave() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showToast('ファイルを書き出しました。\n「ファイル」アプリで iCloud/taskchute-sync/edits/ に保存してください');
+    showToast('ファイルを書き出しました');
     setTimeout(() => {
       const ok = confirm('書き出しが完了しました。\n変更ログをクリアしますか？\n（PC 側で取り込み後に「はい」を推奨）');
       if (ok) { State.edits = []; saveToStorage(); render(); }
@@ -156,14 +161,33 @@ function addEdit(action, data) {
   render();
 }
 
+// ---- タブ切替 ----
+function setupTabs() {
+  $$('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      State.activeTab = tab;
+      saveToStorage();
+      render();
+    });
+  });
+}
+
+function applyActiveTab() {
+  $$('.tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === State.activeTab);
+  });
+  $('#panel-tasks').hidden = State.activeTab !== 'tasks';
+  $('#panel-routines').hidden = State.activeTab !== 'routines';
+  $('#panel-plans').hidden = State.activeTab !== 'plans';
+}
+
 // ---- レンダリング ----
 function render() {
   if (!State.data) {
     $('#welcome').hidden = false;
-    $('#panel-tasks').hidden = true;
-    $('#panel-routines').hidden = true;
-    $('#panel-plans').hidden = true;
-    $('#panel-edits').hidden = true;
+    $('#tabs').hidden = true;
+    $('#main').hidden = true;
     $('#footer').hidden = true;
     $('#date-label').textContent = '—';
     $('#sync-status').textContent = '';
@@ -172,17 +196,28 @@ function render() {
   }
 
   $('#welcome').hidden = true;
+  $('#tabs').hidden = false;
+  $('#main').hidden = false;
   $('#date-label').textContent = formatDate(State.currentDate);
   $('#sync-status').textContent = '読込済';
   $('#sync-status').classList.add('loaded');
 
-  renderTasks();
-  renderRoutines();
-  renderPlans();
-  renderEdits();
+  // タブ件数更新
+  const tasks = getTasksWithEdits();
+  const routines = getRoutinesWithEdits();
+  const plans = getPlansWithEdits();
+  const tasksDone = tasks.filter(t => t.completed).length;
+  const routinesDone = routines.filter(r => r.done).length;
+  $('#tab-tasks-count').textContent = `${tasksDone}/${tasks.length}`;
+  $('#tab-routines-count').textContent = `${routinesDone}/${routines.length}`;
+  $('#tab-plans-count').textContent = `${plans.length}`;
+
+  applyActiveTab();
+  renderTasks(tasks);
+  renderRoutines(routines);
+  renderPlans(plans);
 
   $('#footer').hidden = State.edits.length === 0;
-
   const badge = $('#edits-badge');
   if (State.edits.length > 0) {
     badge.hidden = false;
@@ -193,26 +228,22 @@ function render() {
   $('#edits-count-bottom').textContent = State.edits.length;
 }
 
-function renderTasks() {
+// ---- タスク描画（コンパクト） ----
+function renderTasks(tasks) {
   const list = $('#tasks-list');
   list.innerHTML = '';
-  const tasks = getTasksWithEdits();
-  let completed = 0;
-  tasks.forEach(t => { if (t.completed) completed++; });
-  $('#tasks-count').textContent = `${completed}/${tasks.length}`;
-
   if (tasks.length === 0) {
     list.innerHTML = '<div class="empty-state">タスクがありません</div>';
-  } else {
-    tasks.forEach((t, idx) => list.appendChild(buildTaskRow(t, idx)));
+    return;
   }
-  $('#panel-tasks').hidden = false;
+  tasks.forEach(t => list.appendChild(buildTaskRow(t)));
 }
 
-function buildTaskRow(task, idx) {
+function buildTaskRow(task) {
   const row = document.createElement('div');
   row.className = 'item' + (task.completed ? ' checked' : '');
 
+  // チェック
   const chk = document.createElement('button');
   chk.className = 'item-check' + (task.completed ? ' checked' : '');
   chk.addEventListener('click', (e) => {
@@ -221,51 +252,45 @@ function buildTaskRow(task, idx) {
   });
   row.appendChild(chk);
 
-  const body = document.createElement('div');
-  body.className = 'item-body';
-
+  // 時刻（実績優先）
   const time = document.createElement('div');
-  time.className = 'item-time';
   const hasActual = task.start_time && task.end_time;
+  time.className = 'item-time' + (hasActual ? ' has-actual' : '');
   const s = hasActual ? task.start_time : (task.plan_start || '');
   const e = hasActual ? task.end_time : (task.plan_end || '');
-  const prefix = hasActual ? '実績' : '予定';
-  time.textContent = s && e ? `${prefix} ${s} - ${e}` : (s ? `${prefix} ${s}` : '時間未定');
-  body.appendChild(time);
+  time.textContent = s && e ? `${s}-${e}` : (s || '--:--');
+  row.appendChild(time);
 
+  // タスク名
   const name = document.createElement('div');
   name.className = 'item-name';
   name.textContent = task.task_name || '(無題)';
+  // エネルギーマーク
   if (task.charge > 0) {
-    const b = document.createElement('span');
-    b.className = 'energy-badge charge';
-    b.textContent = '⚡'.repeat(task.charge);
-    name.appendChild(b);
+    const m = document.createElement('span');
+    m.className = 'energy-mark charge';
+    m.textContent = '⚡' + (task.charge > 1 ? task.charge : '');
+    name.appendChild(m);
   }
   if (task.discharge > 0) {
-    const b = document.createElement('span');
-    b.className = 'energy-badge discharge';
-    b.textContent = '⚡'.repeat(task.discharge);
-    name.appendChild(b);
+    const m = document.createElement('span');
+    m.className = 'energy-mark discharge';
+    m.textContent = '⚡' + (task.discharge > 1 ? task.discharge : '');
+    name.appendChild(m);
   }
-  body.appendChild(name);
+  row.appendChild(name);
 
-  const comment = document.createElement('div');
-  comment.className = 'item-comment' + (task.comment ? '' : ' empty');
-  const parts = [];
-  if (task.category) parts.push(`#${task.category}`);
-  if (task.comment) parts.push(task.comment);
-  comment.textContent = parts.join(' ') || 'タップで編集';
-  body.appendChild(comment);
+  // ›
+  const arrow = document.createElement('div');
+  arrow.className = 'item-action';
+  arrow.textContent = '›';
+  row.appendChild(arrow);
 
-  body.addEventListener('click', () => openTaskModalForEdit(task));
-  row.appendChild(body);
-
-  const act = document.createElement('div');
-  act.className = 'item-action';
-  act.textContent = '›';
-  row.appendChild(act);
-
+  // 行クリックで詳細
+  row.addEventListener('click', (ev) => {
+    if (ev.target === chk) return;  // チェックボタンは除外
+    openTaskModalForEdit(task);
+  });
   return row;
 }
 
@@ -283,6 +308,8 @@ function toggleTaskChecked(task) {
 function openTaskModalForAdd() {
   State.taskEditTarget = null;
   $('#task-modal-title').textContent = 'タスクを追加';
+  $('#btn-task-delete').hidden = true;
+  $('#task-completed').checked = false;
   $('#task-name').value = '';
   $('#task-plan-start').value = '';
   $('#task-plan-end').value = '';
@@ -299,7 +326,9 @@ function openTaskModalForAdd() {
 
 function openTaskModalForEdit(task) {
   State.taskEditTarget = task;
-  $('#task-modal-title').textContent = 'タスクを編集';
+  $('#task-modal-title').textContent = 'タスク詳細';
+  $('#btn-task-delete').hidden = true; // 削除は将来対応
+  $('#task-completed').checked = !!task.completed;
   $('#task-name').value = task.task_name || '';
   $('#task-plan-start').value = task.plan_start || '';
   $('#task-plan-end').value = task.plan_end || '';
@@ -318,6 +347,7 @@ function saveTaskFromModal() {
   if (!name) { alert('タスク名を入力してください'); return; }
   const values = {
     task_name: name,
+    completed: $('#task-completed').checked,
     plan_start: $('#task-plan-start').value,
     plan_end: $('#task-plan-end').value,
     start_time: $('#task-actual-start').value,
@@ -343,72 +373,89 @@ function saveTaskFromModal() {
     if (values.discharge !== (t.discharge || 0)) changed.discharge = values.discharge;
     if (values.comment !== (t.comment || '')) changed.comment = values.comment;
 
-    if (Object.keys(changed).length === 0) { $('#modal-task').hidden = true; return; }
-    Object.assign(t, changed);
-    addEdit('task_update', {
-      task_id: t.task_id || '',
-      segment_index: t.segment_index || 0,
-      task_name: t.task_name,
-      fields: changed
-    });
+    // 完了状態も差分で記録
+    const completedChanged = values.completed !== !!t.completed;
+
+    if (Object.keys(changed).length === 0 && !completedChanged) {
+      $('#modal-task').hidden = true;
+      return;
+    }
+
+    if (Object.keys(changed).length > 0) {
+      Object.assign(t, changed);
+      addEdit('task_update', {
+        task_id: t.task_id || '',
+        segment_index: t.segment_index || 0,
+        task_name: t.task_name,
+        fields: changed
+      });
+    }
+    if (completedChanged) {
+      t.completed = values.completed;
+      addEdit('task_check', {
+        task_id: t.task_id || '',
+        segment_index: t.segment_index || 0,
+        task_name: t.task_name,
+        completed: t.completed
+      });
+    }
+
     $('#modal-task').hidden = true;
-    showToast('タスクを更新しました');
+    showToast('保存しました');
   } else {
     addEdit('task_add', values);
     $('#modal-task').hidden = true;
-    showToast('タスクを追加しました');
+    showToast('追加しました');
   }
 }
 
 // ---- ルーティン ----
-function renderRoutines() {
+function renderRoutines(routines) {
   const list = $('#routines-list');
   list.innerHTML = '';
-  const routines = getRoutinesWithEdits();
-  let done = 0;
-  routines.forEach(r => { if (r.done) done++; });
-  $('#routines-count').textContent = `${done}/${routines.length}`;
-  if (routines.length === 0) { $('#panel-routines').hidden = true; return; }
-  routines.forEach(r => { list.appendChild(buildRoutineRow(r)); });
-  $('#panel-routines').hidden = false;
+  if (routines.length === 0) {
+    list.innerHTML = '<div class="empty-state">ルーティンがありません</div>';
+    return;
+  }
+  routines.forEach(r => list.appendChild(buildRoutineRow(r)));
 }
 
 function buildRoutineRow(r) {
   const row = document.createElement('div');
   row.className = 'item' + (r.done ? ' checked' : '');
 
+  // アイコン丸
   const iconEl = document.createElement('div');
   iconEl.className = 'item-icon';
   iconEl.style.background = r.color || '#E1BEE7';
   iconEl.textContent = r.icon || '•';
   row.appendChild(iconEl);
 
-  const body = document.createElement('div');
-  body.className = 'item-body';
-
+  // 時刻
   const time = document.createElement('div');
   time.className = 'item-time';
-  time.textContent = r.start_time || '';
-  body.appendChild(time);
+  time.textContent = r.start_time || '--:--';
+  row.appendChild(time);
 
+  // 名前
   const name = document.createElement('div');
   name.className = 'item-name';
   name.textContent = r.name || '(無題)';
   if (r.charge > 0) {
-    const b = document.createElement('span');
-    b.className = 'energy-badge charge';
-    b.textContent = '⚡'.repeat(r.charge);
-    name.appendChild(b);
+    const m = document.createElement('span');
+    m.className = 'energy-mark charge';
+    m.textContent = '⚡' + (r.charge > 1 ? r.charge : '');
+    name.appendChild(m);
   }
   if (r.discharge > 0) {
-    const b = document.createElement('span');
-    b.className = 'energy-badge discharge';
-    b.textContent = '⚡'.repeat(r.discharge);
-    name.appendChild(b);
+    const m = document.createElement('span');
+    m.className = 'energy-mark discharge';
+    m.textContent = '⚡' + (r.discharge > 1 ? r.discharge : '');
+    name.appendChild(m);
   }
-  body.appendChild(name);
-  row.appendChild(body);
+  row.appendChild(name);
 
+  // チェック
   const chk = document.createElement('button');
   chk.className = 'item-check' + (r.done ? ' checked' : '');
   chk.addEventListener('click', (e) => {
@@ -416,6 +463,7 @@ function buildRoutineRow(r) {
     toggleRoutineDone(r);
   });
   row.appendChild(chk);
+
   return row;
 }
 
@@ -430,71 +478,60 @@ function toggleRoutineDone(r) {
 }
 
 // ---- 予定 ----
-function renderPlans() {
+function renderPlans(plans) {
   const list = $('#plans-list');
   list.innerHTML = '';
-  const plans = getPlansWithEdits();
-  $('#plans-count').textContent = `${plans.length}`;
   if (plans.length === 0) {
     list.innerHTML = '<div class="empty-state">予定はありません</div>';
-  } else {
-    plans.forEach(p => { list.appendChild(buildPlanRow(p)); });
+    return;
   }
-  $('#panel-plans').hidden = false;
+  plans.forEach(p => list.appendChild(buildPlanRow(p)));
 }
 
 function buildPlanRow(p) {
   const row = document.createElement('div');
   row.className = 'item';
 
+  // アイコン
   const icon = document.createElement('div');
   icon.className = 'item-icon';
   icon.style.background = p.color || '#B3E5FC';
   icon.textContent = '📋';
   row.appendChild(icon);
 
-  const body = document.createElement('div');
-  body.className = 'item-body';
-
+  // 時刻
   const time = document.createElement('div');
-  time.className = 'item-time';
   const hasActual = p.actual_start && p.actual_end;
+  time.className = 'item-time' + (hasActual ? ' has-actual' : '');
   const s = hasActual ? p.actual_start : (p.plan_start || '');
   const e = hasActual ? p.actual_end : (p.plan_end || '');
-  const prefix = hasActual ? '実績' : '予定';
-  time.textContent = s && e ? `${prefix} ${s} - ${e}` : (s ? `${prefix} ${s}` : '時間未定');
-  body.appendChild(time);
+  time.textContent = s && e ? `${s}-${e}` : (s || '--:--');
+  row.appendChild(time);
 
+  // タイトル
   const name = document.createElement('div');
   name.className = 'item-name';
   name.textContent = p.title || '(無題)';
   if (p.charge > 0) {
-    const b = document.createElement('span');
-    b.className = 'energy-badge charge';
-    b.textContent = '⚡'.repeat(p.charge);
-    name.appendChild(b);
+    const m = document.createElement('span');
+    m.className = 'energy-mark charge';
+    m.textContent = '⚡' + (p.charge > 1 ? p.charge : '');
+    name.appendChild(m);
   }
   if (p.discharge > 0) {
-    const b = document.createElement('span');
-    b.className = 'energy-badge discharge';
-    b.textContent = '⚡'.repeat(p.discharge);
-    name.appendChild(b);
+    const m = document.createElement('span');
+    m.className = 'energy-mark discharge';
+    m.textContent = '⚡' + (p.discharge > 1 ? p.discharge : '');
+    name.appendChild(m);
   }
-  body.appendChild(name);
+  row.appendChild(name);
 
-  if (p.label || p.category || p.comment) {
-    const c = document.createElement('div');
-    c.className = 'item-comment';
-    const parts = [];
-    if (p.label) parts.push(`[${p.label}]`);
-    if (p.category) parts.push(`#${p.category}`);
-    if (p.comment) parts.push(p.comment);
-    c.textContent = parts.join(' ');
-    body.appendChild(c);
-  }
+  const arrow = document.createElement('div');
+  arrow.className = 'item-action';
+  arrow.textContent = '›';
+  row.appendChild(arrow);
 
-  body.addEventListener('click', () => openPlanModalForEdit(p));
-  row.appendChild(body);
+  row.addEventListener('click', () => openPlanModalForEdit(p));
   return row;
 }
 
@@ -518,7 +555,7 @@ function openPlanModalForAdd() {
 
 function openPlanModalForEdit(plan) {
   State.planEditTarget = plan;
-  $('#plan-modal-title').textContent = '予定を編集';
+  $('#plan-modal-title').textContent = '予定詳細';
   $('#plan-title').value = plan.title || '';
   $('#plan-start').value = plan.plan_start || '';
   $('#plan-end').value = plan.plan_end || '';
@@ -571,44 +608,11 @@ function savePlanFromModal() {
       fields: changed
     });
     $('#modal-plan').hidden = true;
-    showToast('予定を更新しました');
+    showToast('保存しました');
   } else {
     addEdit('plan_add', values);
     $('#modal-plan').hidden = true;
-    showToast('予定を追加しました');
-  }
-}
-
-// ---- 変更ログ描画 ----
-function renderEdits() {
-  const list = $('#edits-list');
-  list.innerHTML = '';
-  $('#edits-count').textContent = String(State.edits.length);
-  if (State.edits.length === 0) { $('#panel-edits').hidden = true; return; }
-  const items = State.edits.slice(-10);
-  items.forEach(e => {
-    const row = document.createElement('div');
-    row.className = 'edit-item';
-    const time = e.timestamp.substring(11, 16);
-    row.innerHTML =
-      `<span class="edit-time">${time}</span>` +
-      `<span class="edit-action">${describeAction(e)}</span>`;
-    list.appendChild(row);
-  });
-  $('#panel-edits').hidden = false;
-}
-
-function describeAction(edit) {
-  const d = edit.data || {};
-  switch (edit.action) {
-    case 'task_add': return `タスク追加: ${d.task_name}`;
-    case 'task_update': return `タスク更新: ${d.task_name}`;
-    case 'task_check': return `${d.completed ? '✓' : '□'} ${d.task_name}`;
-    case 'task_comment': return `コメント: ${d.task_name}`;
-    case 'plan_add': return `予定追加: ${d.title}`;
-    case 'plan_update': return `予定更新: ${d.title}`;
-    case 'routine_check': return `${d.done ? '✓' : '□'} ${d.name}`;
-    default: return edit.action;
+    showToast('追加しました');
   }
 }
 
@@ -630,7 +634,8 @@ function getTasksWithEdits() {
         comment: e.data.comment || '',
         charge: e.data.charge || 0,
         discharge: e.data.discharge || 0,
-        completed: false, started: false,
+        completed: !!e.data.completed,
+        started: false,
         _is_pending: true
       });
     } else if (e.action === 'task_update') {
@@ -640,6 +645,13 @@ function getTasksWithEdits() {
         (!e.data.task_id && t.task_name === e.data.task_name)
       );
       if (target && e.data.fields) Object.assign(target, e.data.fields);
+    } else if (e.action === 'task_check') {
+      const target = tasks.find(t =>
+        (e.data.task_id && t.task_id === e.data.task_id &&
+          (t.segment_index || 0) === (e.data.segment_index || 0)) ||
+        (!e.data.task_id && t.task_name === e.data.task_name)
+      );
+      if (target) target.completed = !!e.data.completed;
     }
   });
   tasks.sort((a, b) => (a.plan_start || '99:99').localeCompare(b.plan_start || '99:99'));
@@ -648,7 +660,17 @@ function getTasksWithEdits() {
 
 function getRoutinesWithEdits() {
   if (!State.data) return [];
-  return State.data.routines.map(r => ({ ...r }));
+  const routines = State.data.routines.map(r => ({ ...r }));
+  State.edits.forEach(e => {
+    if (e.action === 'routine_check') {
+      const target = routines.find(r =>
+        r.routine_id === e.data.routine_id &&
+        (r.order_index || 0) === (e.data.order_index || 0)
+      );
+      if (target) target.done = !!e.data.done;
+    }
+  });
+  return routines;
 }
 
 function getPlansWithEdits() {
@@ -681,7 +703,7 @@ function getPlansWithEdits() {
   return plans;
 }
 
-// ---- ボタンセットアップ ----
+// ---- ボタン ----
 function setupModals() {
   $('#btn-add-task').addEventListener('click', openTaskModalForAdd);
   $('#btn-task-save').addEventListener('click', saveTaskFromModal);
@@ -694,21 +716,6 @@ function setupModalClose() {
     btn.addEventListener('click', () => {
       btn.closest('.modal').hidden = true;
     });
-  });
-  $$('.modal').forEach(m => {
-    m.addEventListener('click', (e) => {
-      if (e.target === m) m.hidden = true;
-    });
-  });
-}
-
-function setupClearEdits() {
-  $('#btn-clear-edits').addEventListener('click', () => {
-    if (!confirm('記録中の変更をすべて破棄します。よろしいですか？')) return;
-    State.edits = [];
-    saveToStorage();
-    render();
-    showToast('変更をクリアしました');
   });
 }
 
@@ -723,9 +730,9 @@ function registerSW() {
 function init() {
   setupFileLoad();
   setupSave();
+  setupTabs();
   setupModals();
   setupModalClose();
-  setupClearEdits();
   registerSW();
   if (loadFromStorage()) {
     populateSelects();
