@@ -46,6 +46,10 @@
     <span class="tab-label">タスク</span>
     <span class="tab-count" id="tab-tasks-count">0</span>
   </button>
+  <button class="tab" data-tab="incomplete">
+    <span class="tab-label">未完了</span>
+    <span class="tab-count" id="tab-incomplete-count">0</span>
+  </button>
   <button class="tab" data-tab="routines">
     <span class="tab-label">ルーティン</span>
     <span class="tab-count" id="tab-routines-count">0</span>
@@ -63,6 +67,12 @@
   <section class="panel" id="panel-tasks">
     <div id="tasks-list"></div>
     <button class="add-btn" id="btn-add-task">+ タスク追加</button>
+  </section>
+
+  <!-- 未完了タスクパネル -->
+  <section class="panel" id="panel-incomplete" hidden>
+    <p class="panel-hint">タップで今日のタスクシュートに追加できます。</p>
+    <div id="incomplete-list"></div>
   </section>
 
   <!-- ルーティンパネル -->
@@ -115,29 +125,36 @@
           <input type="time" id="task-actual-end">
         </label>
       </div>
-      <label>見積時間
-        <input type="text" id="task-estimate" placeholder="例: 30分">
+      <label>見積時間 (分)
+        <input type="text" id="task-estimate" placeholder="例: 30">
       </label>
       <label>カテゴリー
         <select id="task-category">
-          <option value="">（未分類）</option>
+          <option value="">(未分類)</option>
         </select>
+      </label>
+      <label>🏷️ タグ (カンマ区切り)
+        <input type="text" id="task-tags" placeholder="例: 仕事, 集中, 重要">
       </label>
       <div class="row">
         <label>⚡ 充電
           <select id="task-charge">
-            <option value="0">なし</option>
-            <option value="1">⚡ 小</option>
-            <option value="2">⚡⚡ 中</option>
-            <option value="3">⚡⚡⚡ 大</option>
+            <option value="0">0: なし</option>
+            <option value="1">1: わずか</option>
+            <option value="2">2: 少し</option>
+            <option value="3">3: ふつう</option>
+            <option value="4">4: 強め</option>
+            <option value="5">5: とても強い</option>
           </select>
         </label>
         <label>⚡ 放電
           <select id="task-discharge">
-            <option value="0">なし</option>
-            <option value="1">⚡ 小</option>
-            <option value="2">⚡⚡ 中</option>
-            <option value="3">⚡⚡⚡ 大</option>
+            <option value="0">0: なし</option>
+            <option value="1">1: わずか</option>
+            <option value="2">2: 少し</option>
+            <option value="3">3: ふつう</option>
+            <option value="4">4: 強め</option>
+            <option value="5">5: とても強い</option>
           </select>
         </label>
       </div>
@@ -180,29 +197,36 @@
       </div>
       <label>ラベル
         <select id="plan-label">
-          <option value="">（なし）</option>
+          <option value="">(なし)</option>
         </select>
       </label>
       <label>カテゴリー
         <select id="plan-category">
-          <option value="">（未分類）</option>
+          <option value="">(未分類)</option>
         </select>
+      </label>
+      <label>🏷️ タグ (カンマ区切り)
+        <input type="text" id="plan-tags" placeholder="例: 仕事, 重要">
       </label>
       <div class="row">
         <label>⚡ 充電
           <select id="plan-charge">
-            <option value="0">なし</option>
-            <option value="1">⚡ 小</option>
-            <option value="2">⚡⚡ 中</option>
-            <option value="3">⚡⚡⚡ 大</option>
+            <option value="0">0: なし</option>
+            <option value="1">1: わずか</option>
+            <option value="2">2: 少し</option>
+            <option value="3">3: ふつう</option>
+            <option value="4">4: 強め</option>
+            <option value="5">5: とても強い</option>
           </select>
         </label>
         <label>⚡ 放電
           <select id="plan-discharge">
-            <option value="0">なし</option>
-            <option value="1">⚡ 小</option>
-            <option value="2">⚡⚡ 中</option>
-            <option value="3">⚡⚡⚡ 大</option>
+            <option value="0">0: なし</option>
+            <option value="1">1: わずか</option>
+            <option value="2">2: 少し</option>
+            <option value="3">3: ふつう</option>
+            <option value="4">4: 強め</option>
+            <option value="5">5: とても強い</option>
           </select>
         </label>
       </div>
@@ -216,10 +240,25 @@
   </div>
 </div>
 
+<!-- ===== 削除選択ダイアログ ===== -->
+<div class="modal" id="modal-delete-choice" hidden>
+  <div class="modal-inner small">
+    <header class="modal-header">
+      <h3>削除方法を選んでください</h3>
+    </header>
+    <div class="modal-body">
+      <p id="delete-choice-message">タスクを削除します</p>
+      <button class="choice-btn" id="btn-delete-day-only">📅 今日のタスクシュートから外す<br><small>(WBS や別の日のものは残す)</small></button>
+      <button class="choice-btn danger" id="btn-delete-all">🗑️ タスクそのものを削除<br><small>(WBS / 全日付の履歴も削除)</small></button>
+      <button class="choice-btn" id="btn-delete-cancel">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== トースト ===== -->
 <div class="toast" id="toast" hidden></div>
 
-<!-- ファイル選択（非表示） -->
+<!-- ファイル選択(非表示) -->
 <input type="file" id="file-input" accept=".json,application/json" hidden>
 
 <script src="app.js"></script>

@@ -17,7 +17,7 @@ const State = {
   planEditTarget: null
 };
 
-const STORAGE_KEY = 'taskchute_mobile_state_v3';
+const STORAGE_KEY = 'taskchute_mobile_state_v5';
 
 // ---- ユーティリティ ----
 function $(sel) { return document.querySelector(sel); }
@@ -156,7 +156,44 @@ function setupSave() {
 
 // ---- 編集ログ追加 ----
 function addEdit(action, data) {
-  State.edits.push({ timestamp: nowISO(), action: action, data: data });
+  // === Last-Write-Wins: 編集時に updated_at を新しい値で記録 ===
+  const now = nowISO();
+  data.updated_at = now;
+
+  // 編集対象のアイテム自体の updated_at も更新（次回書き出しで反映される）
+  if (State.data) {
+    if (action === 'task_update' || action === 'task_check' ||
+        action === 'task_start' || action === 'task_comment') {
+      const taskId = data.task_id;
+      const seg = data.segment_index || 0;
+      const tasks = State.data.tasks || [];
+      const target = tasks.find(t =>
+        t.task_id === taskId && (t.segment_index || 0) === seg
+      );
+      if (target) {
+        target.updated_at = now;
+      }
+    } else if (action === 'plan_update') {
+      const planId = data.id || data.plan_id;
+      const plans = State.data.plans || [];
+      const target = plans.find(p => p.id === planId);
+      if (target) {
+        target.updated_at = now;
+      }
+    } else if (action === 'routine_check') {
+      const rid = data.routine_id;
+      const oidx = data.order_index || 0;
+      const routines = State.data.routines || [];
+      const target = routines.find(r =>
+        r.routine_id === rid && (r.order_index || 0) === oidx
+      );
+      if (target) {
+        target.updated_at = now;
+      }
+    }
+  }
+
+  State.edits.push({ timestamp: now, action: action, data: data });
   saveToStorage();
   render();
 }
@@ -178,6 +215,7 @@ function applyActiveTab() {
     btn.classList.toggle('active', btn.dataset.tab === State.activeTab);
   });
   $('#panel-tasks').hidden = State.activeTab !== 'tasks';
+  $('#panel-incomplete').hidden = State.activeTab !== 'incomplete';
   $('#panel-routines').hidden = State.activeTab !== 'routines';
   $('#panel-plans').hidden = State.activeTab !== 'plans';
 }
@@ -206,14 +244,17 @@ function render() {
   const tasks = getTasksWithEdits();
   const routines = getRoutinesWithEdits();
   const plans = getPlansWithEdits();
+  const incomplete = getIncompleteTasksWithEdits();
   const tasksDone = tasks.filter(t => t.completed).length;
   const routinesDone = routines.filter(r => r.done).length;
   $('#tab-tasks-count').textContent = `${tasksDone}/${tasks.length}`;
+  $('#tab-incomplete-count').textContent = `${incomplete.length}`;
   $('#tab-routines-count').textContent = `${routinesDone}/${routines.length}`;
   $('#tab-plans-count').textContent = `${plans.length}`;
 
   applyActiveTab();
   renderTasks(tasks);
+  renderIncomplete(incomplete);
   renderRoutines(routines);
   renderPlans(plans);
 
@@ -278,6 +319,20 @@ function buildTaskRow(task) {
     m.textContent = '⚡' + (task.discharge > 1 ? task.discharge : '');
     name.appendChild(m);
   }
+  // タグ表示
+  if (task.tags && task.tags.length > 0) {
+    const tagWrap = document.createElement('span');
+    tagWrap.className = 'item-tags';
+    task.tags.forEach(t => {
+      const tg = document.createElement('span');
+      tg.className = 'tag-badge';
+      tg.style.backgroundColor = tagBgColor(t);
+      tg.style.color = tagFgColor(t);
+      tg.textContent = t;
+      tagWrap.appendChild(tg);
+    });
+    name.appendChild(tagWrap);
+  }
   row.appendChild(name);
 
   // ›
@@ -317,6 +372,7 @@ function openTaskModalForAdd() {
   $('#task-actual-end').value = '';
   $('#task-estimate').value = '';
   $('#task-category').value = '';
+  $('#task-tags').value = '';
   $('#task-charge').value = '0';
   $('#task-discharge').value = '0';
   $('#task-comment').value = '';
@@ -327,7 +383,7 @@ function openTaskModalForAdd() {
 function openTaskModalForEdit(task) {
   State.taskEditTarget = task;
   $('#task-modal-title').textContent = 'タスク詳細';
-  $('#btn-task-delete').hidden = true; // 削除は将来対応
+  $('#btn-task-delete').hidden = false; // 削除ボタンを表示 (2パターン削除に対応)
   $('#task-completed').checked = !!task.completed;
   $('#task-name').value = task.task_name || '';
   $('#task-plan-start').value = task.plan_start || '';
@@ -336,6 +392,7 @@ function openTaskModalForEdit(task) {
   $('#task-actual-end').value = task.end_time || '';
   $('#task-estimate').value = task.estimate || '';
   $('#task-category').value = task.category || '';
+  $('#task-tags').value = (task.tags || []).join(', ');
   $('#task-charge').value = String(task.charge || 0);
   $('#task-discharge').value = String(task.discharge || 0);
   $('#task-comment').value = task.comment || '';
@@ -345,6 +402,8 @@ function openTaskModalForEdit(task) {
 function saveTaskFromModal() {
   const name = $('#task-name').value.trim();
   if (!name) { alert('タスク名を入力してください'); return; }
+  const tagsStr = $('#task-tags').value;
+  const tags = tagsStr.split(',').map(t => t.trim()).filter(t => t);
   const values = {
     task_name: name,
     completed: $('#task-completed').checked,
@@ -354,6 +413,7 @@ function saveTaskFromModal() {
     end_time: $('#task-actual-end').value,
     estimate: $('#task-estimate').value,
     category: $('#task-category').value,
+    tags: tags,
     charge: parseInt($('#task-charge').value) || 0,
     discharge: parseInt($('#task-discharge').value) || 0,
     comment: $('#task-comment').value
@@ -369,6 +429,7 @@ function saveTaskFromModal() {
     if (values.end_time !== (t.end_time || '')) changed.end_time = values.end_time;
     if (values.estimate !== (t.estimate || '')) changed.estimate = values.estimate;
     if (values.category !== (t.category || '')) changed.category = values.category;
+    if (JSON.stringify(values.tags) !== JSON.stringify(t.tags || [])) changed.tags = values.tags;
     if (values.charge !== (t.charge || 0)) changed.charge = values.charge;
     if (values.discharge !== (t.discharge || 0)) changed.discharge = values.discharge;
     if (values.comment !== (t.comment || '')) changed.comment = values.comment;
@@ -546,6 +607,7 @@ function openPlanModalForAdd() {
   $('#plan-actual-end').value = '';
   $('#plan-label').value = '';
   $('#plan-category').value = '';
+  $('#plan-tags').value = '';
   $('#plan-charge').value = '0';
   $('#plan-discharge').value = '0';
   $('#plan-comment').value = '';
@@ -563,6 +625,7 @@ function openPlanModalForEdit(plan) {
   $('#plan-actual-end').value = plan.actual_end || '';
   $('#plan-label').value = plan.label || '';
   $('#plan-category').value = plan.category || '';
+  $('#plan-tags').value = (plan.tags || []).join(', ');
   $('#plan-charge').value = String(plan.charge || 0);
   $('#plan-discharge').value = String(plan.discharge || 0);
   $('#plan-comment').value = plan.comment || '';
@@ -572,6 +635,8 @@ function openPlanModalForEdit(plan) {
 function savePlanFromModal() {
   const title = $('#plan-title').value.trim();
   if (!title) { alert('タイトルを入力してください'); return; }
+  const tagsStr = $('#plan-tags').value;
+  const tags = tagsStr.split(',').map(t => t.trim()).filter(t => t);
   const values = {
     title: title,
     plan_start: $('#plan-start').value,
@@ -580,6 +645,7 @@ function savePlanFromModal() {
     actual_end: $('#plan-actual-end').value,
     label: $('#plan-label').value,
     category: $('#plan-category').value,
+    tags: tags,
     charge: parseInt($('#plan-charge').value) || 0,
     discharge: parseInt($('#plan-discharge').value) || 0,
     comment: $('#plan-comment').value,
@@ -596,6 +662,7 @@ function savePlanFromModal() {
     if (values.actual_end !== (p.actual_end || '')) changed.actual_end = values.actual_end;
     if (values.label !== (p.label || '')) changed.label = values.label;
     if (values.category !== (p.category || '')) changed.category = values.category;
+    if (JSON.stringify(values.tags) !== JSON.stringify(p.tags || [])) changed.tags = values.tags;
     if (values.charge !== (p.charge || 0)) changed.charge = values.charge;
     if (values.discharge !== (p.discharge || 0)) changed.discharge = values.discharge;
     if (values.comment !== (p.comment || '')) changed.comment = values.comment;
@@ -631,6 +698,7 @@ function getTasksWithEdits() {
         end_time: e.data.end_time || '',
         estimate: e.data.estimate || '',
         category: e.data.category || '',
+        tags: e.data.tags || [],
         comment: e.data.comment || '',
         charge: e.data.charge || 0,
         discharge: e.data.discharge || 0,
@@ -682,6 +750,7 @@ function getPlansWithEdits() {
         title: e.data.title,
         label: e.data.label || '',
         category: e.data.category || '',
+        tags: e.data.tags || [],
         plan_start: e.data.plan_start || '',
         plan_end: e.data.plan_end || '',
         actual_start: e.data.actual_start || '',
@@ -707,8 +776,15 @@ function getPlansWithEdits() {
 function setupModals() {
   $('#btn-add-task').addEventListener('click', openTaskModalForAdd);
   $('#btn-task-save').addEventListener('click', saveTaskFromModal);
+  $('#btn-task-delete').addEventListener('click', openDeleteChoiceForCurrentTask);
   $('#btn-add-plan').addEventListener('click', openPlanModalForAdd);
   $('#btn-plan-save').addEventListener('click', savePlanFromModal);
+  // 削除ダイアログ
+  $('#btn-delete-day-only').addEventListener('click', () => deleteCurrentTask('day_only'));
+  $('#btn-delete-all').addEventListener('click', () => deleteCurrentTask('all'));
+  $('#btn-delete-cancel').addEventListener('click', () => {
+    $('#modal-delete-choice').hidden = true;
+  });
 }
 
 function setupModalClose() {
@@ -718,6 +794,176 @@ function setupModalClose() {
     });
   });
 }
+
+// ====================================================
+// タグ機能 (色生成)
+// ====================================================
+const TAG_PALETTE = [
+  ['#fce4ec', '#c2185b'],  // ピンク
+  ['#e8eaf6', '#3949ab'],  // インディゴ
+  ['#e3f2fd', '#1565c0'],  // ブルー
+  ['#e0f7fa', '#00838f'],  // シアン
+  ['#e0f2f1', '#00695c'],  // ティール
+  ['#e8f5e9', '#2e7d32'],  // グリーン
+  ['#fff3e0', '#e65100'],  // オレンジ
+  ['#ede7f6', '#5e35b1'],  // パープル
+];
+
+function tagHash(tagName) {
+  if (!tagName) return 0;
+  let h = 0;
+  for (let i = 0; i < tagName.length; i++) {
+    h = ((h << 5) - h) + tagName.charCodeAt(i);
+    h = h & h;
+  }
+  return Math.abs(h);
+}
+
+function tagBgColor(tagName) {
+  return TAG_PALETTE[tagHash(tagName) % TAG_PALETTE.length][0];
+}
+
+function tagFgColor(tagName) {
+  return TAG_PALETTE[tagHash(tagName) % TAG_PALETTE.length][1];
+}
+
+// ====================================================
+// 未完了タスク一覧
+// ====================================================
+function getIncompleteTasksWithEdits() {
+  if (!State.data) return [];
+  const incomplete = (State.data.incomplete_tasks || []).map(t => ({ ...t }));
+  // 当日タスクシュートに登録済み (= edits の task_add) のものは除外する
+  const todayTaskNames = new Set();
+  const todayTasks = getTasksWithEdits();
+  todayTasks.forEach(t => {
+    if (t.task_name) todayTaskNames.add(t.task_name.trim());
+  });
+  return incomplete.filter(t => !todayTaskNames.has((t.task_name || '').trim()));
+}
+
+function renderIncomplete(items) {
+  const list = $('#incomplete-list');
+  list.innerHTML = '';
+  if (!items || items.length === 0) {
+    list.innerHTML = '<div class="empty-state">未完了タスクはありません</div>';
+    return;
+  }
+  items.forEach(t => list.appendChild(buildIncompleteRow(t)));
+}
+
+function buildIncompleteRow(item) {
+  const row = document.createElement('div');
+  row.className = 'item incomplete-item';
+
+  // タップ → 今日に追加
+  const addBtn = document.createElement('button');
+  addBtn.className = 'item-add-btn';
+  addBtn.textContent = '+';
+  addBtn.title = '今日のタスクシュートに追加';
+  addBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    addIncompleteToToday(item);
+  });
+  row.appendChild(addBtn);
+
+  // タスク名
+  const name = document.createElement('div');
+  name.className = 'item-name';
+  let prefix = '';
+  if (item.tag === '今日の予定') prefix = '[今日] ';
+  else if (item.tag === 'start_date 未設定') prefix = '[未設定] ';
+  else if (item.is_this_week_tactic) prefix = '🎯 ';
+  name.textContent = prefix + (item.task_name || '(無題)');
+  // タグバッジ
+  if (item.tags && item.tags.length > 0) {
+    const tagWrap = document.createElement('span');
+    tagWrap.className = 'item-tags';
+    item.tags.forEach(t => {
+      const tg = document.createElement('span');
+      tg.className = 'tag-badge';
+      tg.style.backgroundColor = tagBgColor(t);
+      tg.style.color = tagFgColor(t);
+      tg.textContent = t;
+      tagWrap.appendChild(tg);
+    });
+    name.appendChild(tagWrap);
+  }
+  row.appendChild(name);
+
+  // メタ情報 (登録経過 / 期日)
+  const meta = document.createElement('div');
+  meta.className = 'item-meta';
+  const parts = [];
+  if (item.due_date) {
+    parts.push(`期日:${item.due_date}`);
+  }
+  if (item.reg_days_ago && item.reg_days_ago > 0) {
+    parts.push(`${item.reg_days_ago}日前`);
+  }
+  meta.textContent = parts.join(' · ');
+  row.appendChild(meta);
+
+  return row;
+}
+
+function addIncompleteToToday(item) {
+  // 編集として task_add を発行
+  const values = {
+    task_name: item.task_name,
+    task_id: item.task_id || '',
+    completed: false,
+    plan_start: '',
+    plan_end: '',
+    start_time: '',
+    end_time: '',
+    estimate: '',
+    category: item.category || '',
+    tags: item.tags || [],
+    charge: 0,
+    discharge: 0,
+    comment: '',
+    from_incomplete: true
+  };
+  addEdit('task_add', values);
+  showToast(`「${item.task_name}」を今日に追加しました`);
+}
+
+// ====================================================
+// 削除2パターン
+// ====================================================
+function openDeleteChoiceForCurrentTask() {
+  if (!State.taskEditTarget) return;
+  const t = State.taskEditTarget;
+  $('#delete-choice-message').textContent = `「${t.task_name || '(無題)'}」をどう削除しますか?`;
+  $('#modal-delete-choice').hidden = false;
+}
+
+function deleteCurrentTask(mode) {
+  const t = State.taskEditTarget;
+  if (!t) return;
+  if (mode === 'day_only') {
+    addEdit('task_delete_day', {
+      task_id: t.task_id || '',
+      segment_index: t.segment_index || 0,
+      task_name: t.task_name
+    });
+    showToast('今日のタスクシュートから外しました');
+  } else if (mode === 'all') {
+    if (!confirm('タスクそのものを完全削除します。WBS や全日付の履歴からも削除されます。よろしいですか?')) {
+      return;
+    }
+    addEdit('task_delete_all', {
+      task_id: t.task_id || '',
+      task_name: t.task_name
+    });
+    showToast('タスクそのものを削除しました');
+  }
+  $('#modal-delete-choice').hidden = true;
+  $('#modal-task').hidden = true;
+  State.taskEditTarget = null;
+}
+
 
 function registerSW() {
   if ('serviceWorker' in navigator) {

@@ -2,7 +2,7 @@
  * シンプルなキャッシュ戦略: 静的ファイルのみオフライン対応
  */
 
-const CACHE_NAME = 'taskchute-mobile-v3';
+const CACHE_NAME = 'taskchute-mobile-v5';
 const STATIC_ASSETS = [
   './',
   './index.html',
